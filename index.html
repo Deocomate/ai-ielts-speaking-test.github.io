@@ -170,6 +170,7 @@
         const stopTestBtn = document.getElementById('stopTestBtn');
         const evaluationResult = document.getElementById('evaluationResult');
         const restartTestBtn = document.getElementById('restartTestBtn');
+        const controlsDiv = document.getElementById('controls');
 
         // --- STATE MANAGEMENT ---
         let geminiApiKey = '';
@@ -181,6 +182,7 @@
         let audioChunks = [];
         let preparationTimer;
         let voices = [];
+        let originalControlButtonHandler;
 
         // --- CONSTANTS ---
         const API_URL = (model) => `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=`;
@@ -254,7 +256,7 @@ Now, let's begin. I am ready for the test.`
             });
         }
 
-        // Function to speak text using Web Speech API
+        // Function to speak text using Web Speech API with better mobile support
         function speakText(text) {
             // Stop any current speech
             window.speechSynthesis.cancel();
@@ -298,6 +300,7 @@ Now, let's begin. I am ready for the test.`
             utterance.onerror = (e) => {
                 console.error("Speech synthesis error:", e);
                 isAISpeaking = false;
+                // Continue the test even if speech fails
                 if (isTestRunning) {
                     if (text.toLowerCase().includes("i'm going to give you a topic")) {
                         startPart2Preparation();
@@ -307,14 +310,65 @@ Now, let's begin. I am ready for the test.`
                 }
             };
 
-            // Speak the text
-            window.speechSynthesis.speak(utterance);
+            // Try to speak the text
+            try {
+                window.speechSynthesis.speak(utterance);
+
+                // Special handling for mobile: check if speech actually started
+                // This is particularly important for iOS devices
+                setTimeout(() => {
+                    if (window.speechSynthesis.speaking === false && isAISpeaking === true) {
+                        // Speech didn't actually start despite no error
+                        console.log("Speech didn't start properly - common on mobile");
+                        isAISpeaking = false;
+
+                        // Update UI to show the user they need to continue manually
+                        updateStatus('Nhấn vào "Nghe lại" hoặc bấm "Tiếp tục" để tiếp tục bài thi', false);
+
+                        // Show a continue button
+                        showContinueButton(text);
+                    }
+                }, 500);
+            } catch (e) {
+                console.error("Error attempting speech synthesis:", e);
+                isAISpeaking = false;
+
+                // Show continue button if speech fails
+                showContinueButton(text);
+            }
+        }
+
+        // Function to show a continue button when speech fails
+        function showContinueButton(text) {
+            // Create continue button if it doesn't exist
+            if (!document.getElementById('continueButton')) {
+                const continueButton = document.createElement('button');
+                continueButton.id = 'continueButton';
+                continueButton.className = 'bg-green-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-green-700 transition shadow-sm';
+                continueButton.innerText = 'Tiếp tục bài thi';
+                continueButton.onclick = () => {
+                    if (isTestRunning) {
+                        if (text.toLowerCase().includes("i'm going to give you a topic")) {
+                            startPart2Preparation();
+                        } else {
+                            startListening();
+                        }
+                        continueButton.remove();
+                    }
+                };
+
+                // Add to the controls div
+                controlsDiv.appendChild(continueButton);
+            }
         }
 
         // --- INITIALIZATION ---
         window.addEventListener('DOMContentLoaded', async () => {
             // Initialize voices
             await initVoices();
+
+            // Store the original control button handler
+            originalControlButtonHandler = handleControlButtonClick;
 
             geminiApiKey = localStorage.getItem('geminiApiKey');
             if (geminiApiKey) {
@@ -387,7 +441,17 @@ Now, let's begin. I am ready for the test.`
                 replayButton.innerHTML = '🔊 Nghe lại';
                 replayButton.className = 'text-xs bg-slate-200 hover:bg-slate-300 p-1 mt-2 rounded';
                 replayButton.dataset.text = text;
-                replayButton.onclick = () => speakText(text);
+                replayButton.onclick = function () {
+                    speakText(text);
+
+                    // When replay is clicked, also prepare for the next part of the test
+                    setTimeout(() => {
+                        if (!isAISpeaking && !isListening && isTestRunning) {
+                            // Reset control button to allow proceeding with the test
+                            updateControlButtonForManualProgress(text);
+                        }
+                    }, 300);
+                };
 
                 messageDiv.appendChild(textDiv);
                 messageDiv.appendChild(replayButton);
@@ -397,6 +461,30 @@ Now, let's begin. I am ready for the test.`
 
             conversationLog.appendChild(messageDiv);
             conversationLog.scrollTop = conversationLog.scrollHeight;
+        }
+
+        // Function to update control button for manual progression
+        function updateControlButtonForManualProgress(text) {
+            if (isTestRunning) {
+                // Enable control button and change text to allow manual continuation
+                controlButton.disabled = false;
+                controlButton.innerText = 'Bắt đầu trả lời';
+
+                // Store the original handler
+                const originalHandler = controlButton.onclick;
+
+                // Set new handler
+                controlButton.onclick = () => {
+                    // Reset onclick to original behavior
+                    controlButton.onclick = originalControlButtonHandler;
+
+                    if (text.toLowerCase().includes("i'm going to give you a topic")) {
+                        startPart2Preparation();
+                    } else {
+                        startListening();
+                    }
+                };
+            }
         }
 
         // --- CORE LOGIC ---
@@ -426,6 +514,10 @@ Now, let's begin. I am ready for the test.`
             stopTestBtn.classList.remove('hidden');
             updateStatus('Đang khởi tạo bài thi...', true);
 
+            // Remove any previous continue buttons
+            const continueButton = document.getElementById('continueButton');
+            if (continueButton) continueButton.remove();
+
             conversationHistory = [SYSTEM_INSTRUCTION];
 
             try {
@@ -450,19 +542,29 @@ Now, let's begin. I am ready for the test.`
                 return;
             }
 
-            // Speak the AI response
+            // Try to speak the AI response
             speakText(text);
 
-            // We don't need to immediately start listening or preparation
-            // as that will now be triggered by the onend event of speech synthesis
+            // Ensure the user can proceed even if speech fails
+            setTimeout(() => {
+                // If after 1 second we're not speaking and not listening, update control button
+                if (!isAISpeaking && !isListening && isTestRunning) {
+                    updateControlButtonForManualProgress(text);
+                }
+            }, 1000);
         }
 
         function startPart2Preparation() {
             // Cancel any ongoing speech
             window.speechSynthesis.cancel();
 
+            // Remove any continue button if it exists
+            const continueButton = document.getElementById('continueButton');
+            if (continueButton) continueButton.remove();
+
             let timeLeft = 60;
             controlButton.disabled = true;
+            controlButton.innerText = 'Đang chuẩn bị...';
             updateStatus(`Thời gian chuẩn bị: ${timeLeft} giây`);
 
             preparationTimer = setInterval(() => {
@@ -478,9 +580,17 @@ Now, let's begin. I am ready for the test.`
 
         function startListening() {
             if (isAISpeaking) return;
+
+            // Remove any continue button if it exists
+            const continueButton = document.getElementById('continueButton');
+            if (continueButton) continueButton.remove();
+
             isListening = true;
             controlButton.disabled = false;
             controlButton.innerText = 'Dừng Ghi âm';
+            // Reset the control button's onclick to the original handler
+            controlButton.onclick = originalControlButtonHandler;
+
             updateStatus('Đang nghe... Mời bạn nói.', true);
 
             navigator.mediaDevices.getUserMedia({ audio: true })
@@ -539,6 +649,10 @@ Now, let's begin. I am ready for the test.`
             // Cancel any ongoing speech
             window.speechSynthesis.cancel();
 
+            // Remove any continue button if it exists
+            const continueButton = document.getElementById('continueButton');
+            if (continueButton) continueButton.remove();
+
             updateStatus('Bài thi kết thúc. Đang tạo phản hồi cho bạn...', true);
             isTestRunning = false;
             controlButton.style.display = 'none';
@@ -580,6 +694,10 @@ Now, let's begin. I am ready for the test.`
             // Cancel any ongoing speech
             window.speechSynthesis.cancel();
 
+            // Remove any continue button if it exists
+            const continueButton = document.getElementById('continueButton');
+            if (continueButton) continueButton.remove();
+
             isTestRunning = false;
             isListening = false;
             isAISpeaking = false;
@@ -590,6 +708,8 @@ Now, let's begin. I am ready for the test.`
             controlButton.innerText = 'Bắt đầu Thi';
             controlButton.disabled = false;
             controlButton.style.display = 'block';
+            // Reset the control button's onclick to the original handler
+            controlButton.onclick = originalControlButtonHandler;
             stopTestBtn.classList.add('hidden');
             updateStatus('Nhấn "Bắt đầu Thi" để khởi động.');
         }
