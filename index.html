@@ -176,7 +176,6 @@
         const evaluationResult = document.getElementById('evaluationResult');
         const restartTestBtn = document.getElementById('restartTestBtn');
         const controlsDiv = document.getElementById('controls');
-        // NEW: Reference to the audio prompt element
         const audioPrompt = document.getElementById('audioPrompt');
 
         // --- STATE MANAGEMENT ---
@@ -187,10 +186,9 @@
         let isAISpeaking = false;
         let mediaRecorder;
         let audioChunks = [];
-        let preparationTimer;
+        let preparationTimer; // Timer for Part 2
         let voices = [];
         let originalControlButtonHandler;
-        // NEW: Flag to check if user has interacted to allow audio
         let audioUnlocked = false;
 
         // --- CONSTANTS ---
@@ -280,17 +278,23 @@ Now, let's begin. I am ready for the test.`
 
             utterance.onstart = () => {
                 isAISpeaking = true;
-                audioUnlocked = true; // Audio is now confirmed to be working
-                audioPrompt.classList.add('hidden'); // Hide prompt if it was shown
+                audioUnlocked = true;
+                audioPrompt.classList.add('hidden');
                 updateStatus('AI đang nói...', true);
             };
 
             utterance.onend = () => {
                 isAISpeaking = false;
                 if (isTestRunning) {
+                    // Check if this is the intro to Part 2 to start the preparation timer
                     if (text.toLowerCase().includes("i'm going to give you a topic")) {
                         startPart2Preparation();
-                    } else {
+                    } else if (text.toLowerCase().includes("your preparation time is over")) {
+                        // After announcing time is up, start listening
+                        startListening();
+                    }
+                    else {
+                        // For all other questions, start listening right away
                         startListening();
                     }
                 }
@@ -302,7 +306,6 @@ Now, let's begin. I am ready for the test.`
                 handleSpeechFailure(text);
             };
 
-            // This is the main logic to handle mobile browser restrictions
             setTimeout(() => {
                 if (!window.speechSynthesis.speaking && !audioUnlocked) {
                     console.warn("Speech synthesis did not start automatically. Awaiting user interaction.");
@@ -313,25 +316,19 @@ Now, let's begin. I am ready for the test.`
             window.speechSynthesis.speak(utterance);
         }
 
-        // NEW: Centralized function to handle speech failure
         function handleSpeechFailure(text) {
             isAISpeaking = false;
-            // Show the interactive prompt
             audioPrompt.innerHTML = '👉 Trình duyệt yêu cầu tương tác để phát âm thanh. <b>Nhấn vào đây để nghe câu hỏi.</b>';
             audioPrompt.classList.remove('hidden');
             updateStatus('Cần tương tác của bạn để bắt đầu.', false);
 
-            // Set a one-time click handler to unlock audio
             audioPrompt.onclick = () => {
                 audioPrompt.classList.add('hidden');
-                audioUnlocked = true; // Mark audio as unlocked by user
-                speakText(text); // Try speaking again
+                audioUnlocked = true;
+                speakText(text);
             };
-
-            // Also, ensure the main button allows the user to try starting their answer
             updateControlButtonForManualProgress(text);
         }
-
 
         // --- INITIALIZATION ---
         window.addEventListener('DOMContentLoaded', async () => {
@@ -357,11 +354,10 @@ Now, let's begin. I am ready for the test.`
 
             controlButton.addEventListener('click', handleControlButtonClick);
 
-            // UPDATED: Stop button now reloads the page for a clean reset
             stopTestBtn.addEventListener('click', () => {
-                if (confirm("Bạn có chắc chắn muốn dừng bài thi ngay lập tức không? Thao tác này sẽ xóa toàn bộ tiến trình và làm mới lại trang.")) {
-                    window.speechSynthesis.cancel(); // Stop any speech
-                    location.reload(); // Reload the page
+                if (confirm("Bạn có chắc chắn muốn dừng bài thi ngay lập tức? Thao tác này sẽ xóa toàn bộ tiến trình và làm mới lại trang.")) {
+                    window.speechSynthesis.cancel();
+                    location.reload();
                 }
             });
 
@@ -393,7 +389,7 @@ Now, let's begin. I am ready for the test.`
         }
 
         function updateStatus(text, isBlinking = false) {
-            statusText.innerHTML = text; // Use innerHTML to allow for strong tags
+            statusText.innerHTML = text;
             if (isBlinking) {
                 statusIndicator.classList.add('bg-yellow-100');
                 statusText.innerHTML += ' <span class="blinking-dot">●</span>';
@@ -408,7 +404,6 @@ Now, let's begin. I am ready for the test.`
 
             if (sender === 'ai') {
                 const textDiv = document.createElement('div');
-                // Sanitize text before setting innerHTML if it contains user input
                 textDiv.innerText = text;
 
                 const replayButton = document.createElement('button');
@@ -434,8 +429,8 @@ Now, let's begin. I am ready for the test.`
                 controlButton.disabled = false;
                 controlButton.innerText = 'Bắt đầu trả lời';
                 controlButton.onclick = () => {
-                    controlButton.onclick = originalControlButtonHandler; // Restore original handler
-                    audioPrompt.classList.add('hidden'); // Hide prompt on action
+                    controlButton.onclick = originalControlButtonHandler;
+                    audioPrompt.classList.add('hidden');
                     if (text.toLowerCase().includes("i'm going to give you a topic")) {
                         startPart2Preparation();
                     } else {
@@ -471,16 +466,14 @@ Now, let's begin. I am ready for the test.`
             controlButton.innerText = 'Bài thi đang diễn ra...';
             stopTestBtn.classList.remove('hidden');
             updateStatus('Đang khởi tạo bài thi...', true);
-            audioPrompt.classList.add('hidden'); // Ensure prompt is hidden at start
+            audioPrompt.classList.add('hidden');
 
             conversationHistory = [SYSTEM_INSTRUCTION];
 
             try {
                 const firstUserMessage = {
                     role: "user",
-                    parts: [{
-                        text: "Please begin the test."
-                    }]
+                    parts: [{ text: "Please begin the test." }]
                 };
                 conversationHistory.push(firstUserMessage);
 
@@ -495,12 +488,7 @@ Now, let's begin. I am ready for the test.`
 
         async function handleAIResponse(text) {
             addMessageToLog(text, 'ai');
-            conversationHistory.push({
-                role: "model",
-                parts: [{
-                    text
-                }]
-            });
+            conversationHistory.push({ role: "model", parts: [{ text }] });
 
             if (text.toLowerCase().includes("that is the end of the speaking test")) {
                 await endTestAndEvaluate();
@@ -510,6 +498,7 @@ Now, let's begin. I am ready for the test.`
             speakText(text);
         }
 
+        // --- PART 2 COUNTDOWN TIMER ---
         function startPart2Preparation() {
             window.speechSynthesis.cancel();
             audioPrompt.classList.add('hidden');
@@ -517,19 +506,20 @@ Now, let's begin. I am ready for the test.`
             let timeLeft = 60;
             controlButton.disabled = true;
             controlButton.innerText = 'Đang chuẩn bị...';
-            updateStatus(`Thời gian chuẩn bị: ${timeLeft} giây`);
+            updateStatus(`Thời gian chuẩn bị: <strong>${timeLeft}</strong> giây`);
 
             preparationTimer = setInterval(() => {
                 timeLeft--;
-                updateStatus(`Thời gian chuẩn bị: ${timeLeft} giây`);
+                updateStatus(`Thời gian chuẩn bị: <strong>${timeLeft}</strong> giây`);
                 if (timeLeft <= 0) {
                     clearInterval(preparationTimer);
                     const msg = "Your preparation time is over. Please start speaking now.";
                     addMessageToLog(msg, 'ai');
-                    speakText(msg);
+                    speakText(msg); // This will trigger startListening() via its onend event
                 }
             }, 1000);
         }
+
 
         function startListening() {
             if (isAISpeaking) return;
@@ -540,13 +530,14 @@ Now, let's begin. I am ready for the test.`
             controlButton.innerText = 'Dừng Ghi âm';
             controlButton.onclick = originalControlButtonHandler;
 
-            // UPDATED: Clearer instruction for the user
             updateStatus('Đang nghe...<br><strong>Nhấn "Dừng Ghi âm" khi bạn nói xong.</strong>', true);
 
-            navigator.mediaDevices.getUserMedia({
-                audio: true
-            })
+            navigator.mediaDevices.getUserMedia({ audio: true })
                 .then(stream => {
+                    // Stop any previous stream tracks
+                    if (mediaRecorder && mediaRecorder.stream) {
+                        mediaRecorder.stream.getTracks().forEach(track => track.stop());
+                    }
                     mediaRecorder = new MediaRecorder(stream);
                     audioChunks = [];
                     mediaRecorder.ondataavailable = event => {
@@ -564,6 +555,8 @@ Now, let's begin. I am ready for the test.`
         function stopListening() {
             if (mediaRecorder && mediaRecorder.state === 'recording') {
                 mediaRecorder.stop();
+                // Stop the microphone track to turn off the indicator
+                mediaRecorder.stream.getTracks().forEach(track => track.stop());
                 isListening = false;
                 controlButton.disabled = true;
                 controlButton.innerText = 'Đang xử lý...';
@@ -572,9 +565,7 @@ Now, let's begin. I am ready for the test.`
         }
 
         async function processAudio() {
-            const audioBlob = new Blob(audioChunks, {
-                type: 'audio/webm'
-            });
+            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
             const reader = new FileReader();
             reader.readAsDataURL(audioBlob);
             reader.onloadend = async () => {
@@ -582,10 +573,7 @@ Now, let's begin. I am ready for the test.`
                 const userMessage = {
                     role: "user",
                     parts: [{
-                        inline_data: {
-                            mime_type: "audio/webm",
-                            data: base64Audio
-                        }
+                        inline_data: { mime_type: "audio/webm", data: base64Audio }
                     }, {
                         text: "Here is my audio response. Please continue the test."
                     }]
@@ -614,7 +602,6 @@ Now, let's begin. I am ready for the test.`
             stopTestBtn.classList.add('hidden');
 
             try {
-                // The final evaluation is already in the history from the model's last turn
                 const feedback = conversationHistory[conversationHistory.length - 1].parts[0].text;
                 displayEvaluation(feedback);
             } catch (error) {
@@ -626,9 +613,7 @@ Now, let's begin. I am ready for the test.`
 
         function displayEvaluation(feedbackText) {
             let html = '';
-            // Extract the final message containing the evaluation
             const evaluationContent = feedbackText.substring(feedbackText.indexOf("### Overall Band Score:"));
-
             const scoreMatch = evaluationContent.match(/### Overall Band Score: ([\d.]+)/);
 
             if (scoreMatch && scoreMatch[1]) {
@@ -640,12 +625,10 @@ Now, let's begin. I am ready for the test.`
             }
 
             const restOfFeedback = evaluationContent.replace(/### Overall Band Score: ([\d.]+)/, '');
-            // More robust regex to handle markdown lists
             let processedFeedback = restOfFeedback
                 .replace(/### (.*?)\n/g, '<h3>$1</h3>')
                 .replace(/\* (.*?)\n/g, '<li>$1</li>');
 
-            // Wrap list items in <ul> tags
             processedFeedback = processedFeedback.replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>').replace(/<\/ul>\s*<ul>/g, '');
 
             html += processedFeedback;
@@ -660,9 +643,12 @@ Now, let's begin. I am ready for the test.`
             isTestRunning = false;
             isListening = false;
             isAISpeaking = false;
-            audioUnlocked = false; // Reset audio lock status
+            audioUnlocked = false;
             clearInterval(preparationTimer);
-            if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.stream.getTracks().forEach(track => track.stop());
+                mediaRecorder.stop()
+            };
             conversationHistory = [];
             conversationLog.innerHTML = '';
             controlButton.innerText = 'Bắt đầu Thi';
@@ -677,12 +663,8 @@ Now, let's begin. I am ready for the test.`
         async function callGeminiApi(history, model) {
             const response = await fetch(API_URL(model) + geminiApiKey, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    contents: history
-                })
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ contents: history })
             });
             if (!response.ok) {
                 const errorBody = await response.json();
@@ -690,7 +672,6 @@ Now, let's begin. I am ready for the test.`
                 throw new Error(`Yêu cầu API thất bại với trạng thái ${response.status}: ${errorBody.error.message}`);
             }
             const data = await response.json();
-            // Check for valid response structure
             if (data.candidates && data.candidates[0].content && data.candidates[0].content.parts[0] && data.candidates[0].content.parts[0].text) {
                 return data.candidates[0].content.parts[0].text;
             } else if (data.candidates && data.candidates[0].finishReason === 'SAFETY') {
